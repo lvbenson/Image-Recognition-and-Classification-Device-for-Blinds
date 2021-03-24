@@ -9,10 +9,16 @@ import os
 from openvino.inference_engine import IECore
 from BeamSearch import BeamEntry, BeamState, applyLM, addBeam, ctcBeamSearch
 import enchant
+import pygame
+from gtts import gTTS
+import subprocess
+import signal
+
+#from porcupine_demo_mic import *
 #from word_beam_search import WordBeamSearch
 #from inference import Inference #for OCR model
 
-d = enchant.Dict("en_US")
+#d = enchant.Dict("en_US")
 
 fpsstr = ""
 framecount = 0
@@ -110,6 +116,7 @@ def non_max_suppression(boxes, probs=None, angles=None, overlapThresh=0.3):
 
 
 def decode_predictions(scores, geometry1, geometry2):
+    
     # grab the number of rows and columns from the scores volume, then
     # initialize our set of bounding box rectangles and corresponding
     # confidence scores
@@ -174,7 +181,9 @@ def preprocess_input(image):
         Before feeding the data into the model for inference,
         you might have to preprocess it. This function is where you can do that.
         '''
-        if np.shape(image) == ():
+        
+        #make sure the image shape is not 0 before preprocessing
+        if image.shape[0] == 0 or image.shape[1] == 0 or image.shape[2] == 0:
             pass
         #log.info("Preprocessing input...")
         #n, c, h, w = input_shape
@@ -186,7 +195,7 @@ def preprocess_input(image):
             #img = img.transpose((2,0,1))
             img = img.reshape((n, c, h, w))
         
-        return img
+            return img
 
 #predict info for OCR
 def predict(image):
@@ -194,7 +203,7 @@ def predict(image):
             This method is meant for running predictions on the input image.
         '''
         #log.info("Inference...")
-        
+        #print(image.shape)
         input_image = preprocess_input(image)
 
         input_dict = {input_blob_rec: input_image}
@@ -215,7 +224,7 @@ def greedy_decoder(data):
     
 def preprocess_output(outputs):
     #print(len(outputs['shadow/LSTMLayers/transpose_time_major']))
-    text = ctc_decoder(outputs['shadow/LSTMLayers/transpose_time_major'])
+    result = ctc_decoder(outputs['shadow/LSTMLayers/transpose_time_major'])
     
     #mat = outputs['shadow/LSTMLayers/transpose_time_major']
     #classes = "0123456789abcdefghijklmnopqrstuvwxyz#"
@@ -225,11 +234,24 @@ def preprocess_output(outputs):
     
     #text = ctcBeamSearch(mat, classes, None)
     
-    if text:
-        if d.check(str(text)) == True:
-            cv2.putText(orig, text, (startX, startY - 20), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-            print(text)
+    if result:
+        #if d.check(str(text)) == True:
+        #    cv2.putText(orig, text, (startX, startY - 20), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+        #    print(text)
+        cv2.putText(orig, result, (startX, startY - 20), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+        print(result)
         
+        
+        if result and pygame.mixer.music.get_busy() == False:
+                # and pygame.mixer.music.get_busy() == False
+            name = str(result)+'.mp3'
+                #pygame.mixer.init()
+            if not os.path.isfile(name):
+                tts = gTTS(text=str(result), lang='en')
+                tts.save(name)
+            pygame.mixer.music.load(name)
+            pygame.mixer.music.play()
+                
 
 def ctc_decoder(data):
     
@@ -265,6 +287,14 @@ ap.add_argument("-cw", "--camera_width", type=int, default=640, help='USB Camera
 ap.add_argument("-ch", "--camera_height", type=int, default=480, help='USB Camera resolution (height). (Default=480)')
 ap.add_argument('--device', type=str, default='MYRIAD', help='Specify the target device to infer on; CPU, GPU, FPGA or MYRIAD is acceptable. \
                                                            Sample will look for a suitable plugin for device specified (CPU by default)')
+#initiate pygame for TTS
+pygame.mixer.init()
+
+#Wake word script initialization.
+
+
+
+#handle = pvporcupine.create(keywords=['computer', 'terminator'])
 
 args = vars(ap.parse_args())
 
@@ -274,7 +304,7 @@ args = vars(ap.parse_args())
 (newW, newH) = (args["width"], args["height"])
 (rW, rH) = (None, None)
 
-mean = np.array([123.68, 116.779, 103.939][::-1], dtype="float32")
+mean = np.array([123.68, 116.779, 103.939][::-1], dtype="float16")
 
 # define the two output layer names for the EAST detector model that
 # we are interested -- the first is the output probabilities and the
@@ -301,7 +331,7 @@ input_shape = net_rec.input_info[input_blob_rec].input_data.shape #input shape
 output_blob_rec = next(iter(net_rec.outputs)) #output name
 output_shape = net_rec.outputs[output_blob_rec].shape #output shape
 
-
+#WAKEUP KEY INITIALIZED
 
 
 # if a video path was not supplied, grab the reference to the web cam
@@ -310,113 +340,142 @@ if not args.get("video", False):
     vs = VideoStream(src=0).start()
     time.sleep(1.0)
 
-# otherwise, grab a reference to the video file
+    # otherwise, grab a reference to the video file
 else:
     vs = cv2.VideoCapture(args["video"])
 
-# start the FPS throughput estimator
+    # start the FPS throughput estimator
 fps = FPS().start()
 
-# loop over frames from the video stream
-while True:
-    t1 = time.perf_counter()
+    # loop over frames from the video stream
 
-    # grab the current frame, then handle if we are using a
-    # VideoStream or VideoCapture object
-    frame = vs.read()
-    frame = frame[1] if args.get("video", False) else frame
+#initialize the thing
+recognize = os.system("python3 porcupine_demo_mic.py --keywords computer")
+#recognize = subprocess.Popen(['python3','porcupine_demo_mic.py','--keywords','computer'])
 
-    # check to see if we have reached the end of the stream
-    if frame is None:
-        break
+if recognize is not None:
+    signal.SIGINT
+    
+    #trigger second step wake up word
+    #ocr = os.system("python3 porcupine_demo_mic.py --keywords terminator")
+    #if ocr is not None:
+    #recognize.terminate()
 
-    # resize the frame, maintaining the aspect ratio
-    frame = imutils.resize(frame, width=args["camera_width"])
-    orig = frame.copy()
+    
+    while True:
+        
+        ocr = os.system("python3 porcupine_demo_mic.py --keywords terminator")
+        if ocr is not None:
+            #signal.SIGINT
+            count = 0
+            
+            while count<10:
 
-    # if our frame dimensions are None, we still need to compute the
-    # ratio of old frame dimensions to new frame dimensions
-    if W is None or H is None:
-        (H, W) = frame.shape[:2]
-        rW = W / float(newW)
-        rH = H / float(newH)
+    
+                t1 = time.perf_counter()
 
-    # resize the frame, this time ignoring aspect ratio
-    frame = cv2.resize(frame, (newW, newH))
+                # grab the current frame, then handle if we are using a
+                # VideoStream or VideoCapture object
+                frame = vs.read()
+                frame = frame[1] if args.get("video", False) else frame
 
-    # construct a blob from the frame and then perform a forward pass
-    # of the model to obtain the two output layer sets
-    frame = frame.astype(np.float32)
-    frame -= mean
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame = np.expand_dims(frame, axis=0)
-    frame = np.transpose(frame, [0, 3, 1, 2])
-    predictions = exec_net.infer(inputs={input_blob: frame})
-    scores = predictions['feature_fusion/Conv_7/Sigmoid']
-    geometry1 = predictions['feature_fusion/mul_6']
-    geometry2 = predictions['feature_fusion/sub/Fused_Add_']
+                # check to see if we have reached the end of the stream
+                if frame is None:
+                    break
 
-    # decode the predictions, then  apply non-maxima suppression to
-    # suppress weak, overlapping bounding boxes
-    (rects, confidences, angles) = decode_predictions(scores, geometry1, geometry2)
-    boxes, angles = non_max_suppression(np.array(rects), probs=confidences, angles=np.array(angles))
+                # resize the frame, maintaining the aspect ratio
+                frame = imutils.resize(frame, width=args["camera_width"])
+                orig = frame.copy()
 
-    # loop over the bounding boxes
-    for ((startX, startY, endX, endY), angle) in zip(boxes, angles):
-        # scale the bounding box coordinates based on the respective ratios
-        startX = int(startX * rW)
-        startY = int(startY * rH)
-        endX = int(endX * rW)
-        endY = int(endY * rH)
+                # if our frame dimensions are None, we still need to compute the
+                # ratio of old frame dimensions to new frame dimensions
+                if W is None or H is None:
+                    (H, W) = frame.shape[:2]
+                    rW = W / float(newW)
+                    rH = H / float(newH)
 
-        # draw the bounding box on the frame
-        width   = abs(endX - startX)
-        height  = abs(endY - startY)
-        centerX = int(startX + width / 2)
-        centerY = int(startY + height / 2)
+                # resize the frame, this time ignoring aspect ratio
+                frame = cv2.resize(frame, (newW, newH))
 
-        rotatedRect = ((centerX, centerY), ((endX - startX), (endY - startY)), -angle)
-        points = rotated_Rectangle(orig, rotatedRect, color=(0, 255, 0), thickness=2)
-        cv2.polylines(orig, [points], isClosed=True, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_8, shift=0)
-        cv2.putText(orig, fpsstr, (args["camera_width"]-170,15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (38,0,255), 1, cv2.LINE_AA)
-        
-        ###################################################################################################
-        #OCR
-        ###################################################################################################
-        
-        #get ROI image
-        roi = orig[startY:endY, startX:endX]
-        #preprocess and prepares output
-        #only do OCR if theres text detected?????
-        
-        outputs = predict(roi)
-        
-        preprocess_output(outputs)
-        
-        
-        
-        
-        
-        
-        
-        
-    # update the FPS counter
-    fps.update()
+                # construct a blob from the frame and then perform a forward pass
+                # of the model to obtain the two output layer sets
+                frame = frame.astype(np.float32)
+                frame -= mean
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = np.expand_dims(frame, axis=0)
+                frame = np.transpose(frame, [0, 3, 1, 2])
+                predictions = exec_net.infer(inputs={input_blob: frame})
+                scores = predictions['feature_fusion/Conv_7/Sigmoid']
+                geometry1 = predictions['feature_fusion/mul_6']
+                geometry2 = predictions['feature_fusion/sub/Fused_Add_']
 
-    # show the output frame
-    cv2.imshow("Text Detection", orig)
-    if cv2.waitKey(1)&0xFF == ord('q'):
-        break
+                # decode the predictions, then  apply non-maxima suppression to
+                # suppress weak, overlapping bounding boxes
+                (rects, confidences, angles) = decode_predictions(scores, geometry1, geometry2)
+                boxes, angles = non_max_suppression(np.array(rects), probs=confidences, angles=np.array(angles))
 
-    # FPS calculation
-    framecount += 1
-    if framecount >= 10:
-        fpsstr = "(Playback) {:.1f} FPS".format(time1/10)
-        framecount = 0
-        time1 = 0
-    t2 = time.perf_counter()
-    elapsedTime = t2-t1
-    time1 += 1/elapsedTime
+                # loop over the bounding boxes
+                for ((startX, startY, endX, endY), angle) in zip(boxes, angles):
+                    # scale the bounding box coordinates based on the respective ratios
+                    startX = int(startX * rW)
+                    startY = int(startY * rH)
+                    endX = int(endX * rW)
+                    endY = int(endY * rH)
+
+                    # draw the bounding box on the frame
+                    width   = abs(endX - startX)
+                    height  = abs(endY - startY)
+                    centerX = int(startX + width / 2)
+                    centerY = int(startY + height / 2)
+
+                    rotatedRect = ((centerX, centerY), ((endX - startX), (endY - startY)), -angle)
+                    points = rotated_Rectangle(orig, rotatedRect, color=(0, 255, 0), thickness=2)
+                    cv2.polylines(orig, [points], isClosed=True, color=(0, 255, 0), thickness=2, lineType=cv2.LINE_8, shift=0)
+                    cv2.putText(orig, fpsstr, (args["camera_width"]-170,15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (38,0,255), 1, cv2.LINE_AA)
+                    
+                    ###################################################################################################
+                    #OCR
+                    ###################################################################################################
+                    
+                    #get ROI image
+                    roi = orig[startY:endY, startX:endX]
+                    
+                    #ocr = os.system("python3 porcupine_demo_mic.py --keywords computer")
+                    #    if ocr is not None:
+                    #ocr = os.system("python3 porcupine_demo_mic.py --keywords terminator")
+                    
+                    #if ocr is not None:
+                    #preprocess and prepares output
+                    #only do OCR if theres text detected?????
+                    
+                        #ocr.terminate()
+                        
+                    outputs = predict(roi)
+                    
+                    preprocess_output(outputs)
+
+
+            # update the FPS counter
+                count += 1
+                
+                fps.update()
+
+                # show the output frame
+                cv2.imshow("Text Detection", orig)
+                if cv2.waitKey(1)&0xFF == ord('q'):
+                    break
+
+                # FPS calculation
+                framecount += 1
+                if framecount >= 10:
+                    fpsstr = "(Playback) {:.1f} FPS".format(time1/10)
+                    framecount = 0
+                    time1 = 0
+                t2 = time.perf_counter()
+                elapsedTime = t2-t1
+                time1 += 1/elapsedTime
+            
+            
 
 # stop the timer and display FPS information
 fps.stop()
@@ -433,3 +492,9 @@ else:
 
 # close all windows
 cv2.destroyAllWindows()
+
+
+test = os.listdir("/home/pi")
+for item in test:
+    if item.endswith(".mp3"):
+        os.remove(item)
